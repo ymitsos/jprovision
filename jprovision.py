@@ -19,11 +19,17 @@ import logging
 import subprocess
 import re
 from jnpr.junos import Device
+from jnpr.junos.op.phyport import *
 from jnpr.junos.utils.config import Config
+from jnpr.junos.utils.scp import SCP
 import jnpr.junos.exception
 from termcolor import colored
 from IPy import IP
+<<<<<<< HEAD
+from jexceptions import jException
+=======
 from jnpr.junos.utils.scp import SCP
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
 
 SUCCESSFUL = 0
 CONNECTION_FAILED = 1
@@ -34,6 +40,54 @@ COMMIT_ABORTED = 5
 FILE_TRANSFER_COMPLETE = 6
 FILE_TRANSFER_FAILED = 7
 
+<<<<<<< HEAD
+class myDev():
+
+    def __init__(self, hostname=None, port=None, username=None, password=None):
+        self.hostname = hostname
+        self.port = port
+        self.username = username
+        self.password = password
+        self.jnprdev =   Device(host=hostname,
+                         username=username,
+                         password=password,
+                         port=port,
+                         timeout=5,
+                         device_params={'name':'junos'},
+                         hostkey_verify=False)
+        self.rpc = self.jnprdev.rpc
+
+    def _open(self):
+        try:
+            self.jnprdev.open()
+        except (jnpr.junos.exception.ConnectAuthError,
+                jnpr.junos.exception.ConnectUnknownHostError,
+                jnpr.junos.exception.ConnectRefusedError,
+                jnpr.junos.exception.ProbeError,
+                jnpr.junos.exception.ConnectTimeoutError) as err:
+            raise jException(err)
+
+    def open_config(self):
+        self._open()
+        self.jnprdev.bind(cu=Config)
+
+        try:
+            self.jnprdev.cu.lock()
+        except jnpr.junos.exception.LockError as err:
+            raise jException(err, self.hostname)
+
+    def open_show(self):
+        self._open()
+
+    def open_fileupload(self):
+        self._open()
+
+    def load_configuration(self, configuration):
+        try:
+            self.jnprdev.cu.load(configuration, format='set', merge=False)
+        except jnpr.junos.exception.ConfigLoadError as err:
+            raise jException(err, self.hostname)
+=======
 
 def fileloader(host, **kwargs):
 
@@ -86,16 +140,67 @@ def fileloader(host, **kwargs):
         except Exception as err:
             print err
             host['status'] = FILE_TRANSFER_FAILED
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
 
-def provision(host, **kwargs):
+    def showcompare(self):
+        self.jnprdev.cu.diff(rb_id=0)
 
+    def commit(self, comment):
+        try:
+            self.jnprdev.cu.commit(comment=comment, sync=True)
+        except jnpr.junos.exception.CommitError as err:
+            raise jException(err)
+
+    def rollback(self):
+        self.jnprdev.cu.rollback(rb_id=0) #rolling back current changes only
+
+    def show_cmd(self, command):
+        self.jnprdev.cli(command, format='text', warning=True)
+
+    def fileloader(self, package, remotepath):
+        with SCP(self.jnprdev) as scp:
+            try:
+                scp.put(package, remotepath)
+            except Exception as err:
+                raise jException(err, self.hostname)
+
+    def close(self):
+        if hasattr (self.jnprdev, 'cu'):
+            self.jnprdev.cu.unlock()
+        self.jnprdev.close()
+
+def provision(host, logger, **kwargs):
+
+<<<<<<< HEAD
+=======
     username = kwargs['username']
     password = kwargs['password']
     port = kwargs['port']
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
     compareconfig = kwargs['compareconfig']
     configuration = kwargs['configuration']
     waitconfirm = kwargs[b'waitconfirm']
+    print colored('-------------------------------------------------------------------------------\n', 'yellow')
+    print colored('Start committing configuration to: ', 'cyan') + colored('%s' % host['address'], 'yellow')
+    logger.info('Start committing configuration to %s' % host['address'])
 
+    dv = myDev(hostname=host['address'],
+                 username=kwargs['username'],
+                 password=kwargs['password'],
+                 port=kwargs['port'])
+
+    logger.info('Connecting to %s' % host['address'])
+
+<<<<<<< HEAD
+    try:
+        dv.open_config()
+    except jException as err:
+        logging.info(err)
+        print colored(err, 'red')
+        host['status'] = CONNECTION_FAILED
+        return
+
+=======
     print colored("-------------------------------------------------------------------------------\n", 'yellow')
     print colored("Start committing configuration to: ", "cyan") + colored("%s" % host['address'], "yellow")
     logging.info("Start committing configuration to %s" % host['address'])
@@ -137,15 +242,25 @@ def provision(host, **kwargs):
     logging.debug("Acquiring lock to %s." % host)
 
     # lock the device
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
     try:
-        cu.lock()
-    except jnpr.junos.exception.LockError as err:
-        logging.info("Error: unable to lock configuration in %s." % host['address'])
-        print colored("Error: unable to lock configuration in %s", "red") % host['address']
-        host['status'] = UNABLE_TO_LOCK
-        dev.close()
-        return
+        dv.load_configuration(configuration)
+    except jException as err:
+        logging.info(err)
+        print colored(err ,'red')
+        print colored('Loading command failed with severity: %s', 'red') % err.errs['severity']
+        host['status'] = COMMIT_FAILED_WARNING
+        if err.errs['severity'] == 'error':
+            cu.rollback()
+            logging.info('Commit failed. Rolling back in %s and exiting the script' % host['address'])
+            logging.debug('Commit failed with %s rolling back in %s' % (err, host['address']))
+            print colored('Exiting, configuration rolled-back', 'red')
+            host['status'] = COMMIT_FAILED_ERROR
+            dv.close()
+            sys.exit(1)
 
+<<<<<<< HEAD
+=======
     # parse configuration file and load commands. Handle exceptions accordingly
     for line in configuration:
         if line[0] != '#':
@@ -167,9 +282,10 @@ def provision(host, **kwargs):
                     sys.exit(1)
 
     # print "show|compare" results to stdout if requested
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
     if compareconfig != 'true':
         print colored("\n'show | compare' output:", 'blue')
-        print cu.diff()
+        print dv.showcompare()
 
     if waitconfirm == b'true':
         if kwargs['first_host'] == b'true':
@@ -181,6 +297,14 @@ def provision(host, **kwargs):
 
     if ack == 'y' or ack == 'yes':
         try:
+<<<<<<< HEAD
+            dv.commit(comment='This is netconf jprovision script')
+        except jException as err:
+            dv.rollback()
+            logging.info('Commit failed rolling back in %s' % host['address'])
+            logging.debug('Commit failed with %s rolling back in %s' % (err, host['address']))
+            print colored('Configuration rolled-back due to commit error', 'red')
+=======
             cu.commit(comment="This is netconf jprovision script")
             logging.info("Committing to %s succeded." % host['address'])
             logging.debug("Committing to %s succeded." % host['address'])
@@ -191,18 +315,55 @@ def provision(host, **kwargs):
             logging.info("Commit failed rolling back in %s" % host['address'])
             logging.debug("Commit failed with %s rolling back in %s" % (err, host['address']))
             print colored("Configuration rolled-back due to commit error", "red")
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
             host['status'] = COMMIT_FAILED_ERROR
+            return
+
+        logger.info('Committing to %s succeded.' % host['address'])
+        print colored('Succeeded', 'green')
+        if not str(host['status']): host['status'] = SUCCESSFUL
 
     elif ack == 'n' or ack == 'no':
-        logging.info("User aborted commiting")
+        logger.info('User aborted commiting')
         sys.stdout.write('User aborted, rolling back and exiting.\n')
-        cu.rollback()
+        dv.rollback()
+        dv.close()
         host['status'] = COMMIT_ABORTED
         sys.exit(0)
 
-    cu.unlock()
-    dev.close()
-    logging.info("Finished.")
+    dv.close()
+    logger.info('Finished.')
+
+def fileloader(host, logger, package, remotepath, **kwargs):
+    print colored("-------------------------------------------------------------------------------\n", 'yellow')
+    print colored("Start file transfer to: ", "cyan") + colored("%s" % host['address'], "yellow")
+    logging.info("Start file transfer to %s" % host['address'])
+
+    dv = myDev(hostname=host['address'],
+                 username=kwargs['username'],
+                 password=kwargs['password'],
+                 port=kwargs['port'])
+
+    logger.info('Connecting to %s' % host['address'])
+
+    try:
+        dv.open_fileupload()
+    except jException as err:
+        logging.info(err)
+        print colored(err, 'red')
+        host['status'] = CONNECTION_FAILED
+        return
+
+    try:
+        dv.fileloader(package, remotepath)
+        if not str(host['status']): host['status'] = FILE_TRANSFER_COMPLETE
+    except jException as err:
+        logging.info(err)
+        print colored(err, 'red')
+        host['status'] = FILE_TRANSFER_FAILED
+
+    dv.close()
+    logger.info('Finished.')
 
 
 def main():
@@ -210,9 +371,9 @@ def main():
     parser = argparse.ArgumentParser(description='Input parameters', epilog='''EXAMPLE:
        jprovision.py -h router.grnet.gr -c config_file_with_commands.cli''', add_help=False, formatter_class=argparse.RawDescriptionHelpFormatter)
 
-    parser.add_argument('--help', dest='printhelp', action='store_true', help="Print help.")
+    parser.add_argument('--help', dest='printhelp', action='store_true', help='Print help.')
     try:
-        # parse (only) --help here, before the "required" params to other flags cause problems
+        # parse (only) --help here, before the 'required' params to other flags cause problems
         printhelp = parser.parse_known_args()[0].printhelp
     except AttributeError:
         printhelp = False
@@ -242,30 +403,67 @@ def main():
             sys.exit(1)
 
     if not bool(args.target) != bool(args.hostsfile):
-        sys.stdout.write("Either -t or --hosts flag must be defined. Not both.\n")
+        sys.stdout.write('Either -t or --hosts flag must be defined. Not both.\n')
         sys.exit(1)
 
     if not (bool(args.compareconfig) or bool(args.waitconfirm)):
-        sys.stdout.write("--wait-confirm cannot be used when --no-compareconfig is set.\n")
+        sys.stdout.write('--wait-confirm cannot be used when --no-compareconfig is set.\n')
         sys.exit(1)
 
     loglevel = args.loglevel or 'info'
     numeric_level = getattr(logging, loglevel.upper(), None)
 
     if not numeric_level:
-        sys.stderr.write("Wrong log level, using INFO instead")
+        sys.stderr.write('Wrong log level, using INFO instead')
         numeric_level = 20
     logfile = args.logfile or 'jprovision.log'
+<<<<<<< HEAD
+    logging.basicConfig(filename=logfile, filemode='a', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=numeric_level, datefmt='%Y %B %d %H:%M:%S')
+    logger = logging.getLogger('jprovision')
+    logger.info('Logging level set to %d.' % numeric_level)
+
+    logger.info('Parsing hosts list.')
+=======
     logging.basicConfig(filename=logfile, filemode='a', format='%(asctime)s - %(levelname)s - %(message)s', level=numeric_level, datefmt='%Y %B %d %H:%M:%S')
     logging.info("Logging level set to %d." % numeric_level)
 
     logging.info("Parsing hosts list.")
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
     hosts = []
     if args.hostsfile:
         with open(args.hostsfile, mode='r') as hostsfile:
             for line in hostsfile:
                 hosts.append({'address': line.rstrip('\n'), 'status': ''})
     else:
+<<<<<<< HEAD
+        try:
+            subnet = IP(args.target)
+            print'Starting ping sweep on subnet %s' % subnet
+            for i in subnet:
+                if len(subnet) == 1:
+                    ping_result = subprocess.call('ping -c 1 -n -i 0.5 -W 1 %s' % i,
+                        shell=True,
+                        stdout=open('/dev/null', 'w'),
+                        stderr=subprocess.STDOUT)
+                    if ping_result == 0:
+                        hosts.append({'address': str(i), 'status': ''})
+                        logging.debug('Adding IP: %s to hosts list' % i)
+                elif i != subnet.broadcast() and i != subnet.net():
+                    ping_result = subprocess.call('ping -c 1 -n -i 0.5 -W 1 %s' % i,
+                        shell=True,
+                        stdout=open('/dev/null', 'w'),
+                        stderr=subprocess.STDOUT)
+                    if ping_result == 0:
+                        hosts.append({'address': str(i), 'status': ''})
+                        logging.debug('Adding IP: %s to hosts list' % i)
+            print colored('Found %d hosts alive in subnet %s', 'green') % (len(hosts), subnet)
+        except ValueError as err:
+            logging.info(err)
+            print colored(err, 'red')
+            sys.exit(1)
+
+    logger.info('%d hosts found' % len(hosts))
+=======
         subnet = IP(args.target)
         print"Starting ping sweep on subnet %s" % subnet
         for i in subnet:
@@ -280,6 +478,7 @@ def main():
         print "Found %d hosts alive in subnet %s" % (len(hosts), subnet)
 
     logging.info("%d hosts found" % len(hosts))
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
 
     if not args.port:
         port = 22
@@ -288,6 +487,40 @@ def main():
 
     if not args.password:
         args.password = getpass.getpass(args.username + '\'s Password:')
+<<<<<<< HEAD
+
+    params = {
+            'username': args.username,
+            'password': args.password,
+            'port': port,
+            'compareconfig': args.compareconfig,
+            'waitconfirm': b'false'
+            }
+
+    if args.configfile:
+        logger.debug('Opening configfile %s.' % args.configfile)
+        with open(args.configfile, mode='r') as configfile:
+            configuration = configfile.read()
+        params['configuration'] = configuration
+        if not args.waitconfirm:
+            params['waitconfirm'] = 'true'
+            params['first_host'] = b'true'
+            provision (hosts[0], logger, **params)
+            params['first_host'] = b'false'
+            params['waitconfirm'] = b'false'
+            for host in hosts[1:]:
+                provision (host, logger, **params)
+        else:
+            for host in hosts:
+                provision (host, logger, **params)
+    elif args.package and args.remotepath:
+        for host in hosts:
+            fileloader(host, logger, args.package, args.remotepath, **params)
+    else:
+        sys.stderr.write("Shouldn't reach this point\n")
+        sys.exit(1)
+
+=======
     # if jprovision is used to configure hosts then:
     if args.configfile:
         with open(args.configfile, mode='r') as configfile:
@@ -325,6 +558,7 @@ def main():
                 }
         for host in hosts:
             fileloader(host, **params)
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
 
     successful_hosts = []
     connectionfailed_hosts = []
@@ -372,14 +606,28 @@ def main():
         print colored("File transfer failed to %d devices", "red") % len(ftransfer_fail)
     print colored("-------------------------------------------------------------------------------\n", 'magenta')
 
+<<<<<<< HEAD
+    #dump results to file
+=======
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
     regex = re.compile('[\w.-]+grnet[\w.-]+')
     with open('failedhosts.txt', 'w+') as f:
         for i in range(len(connectionfailed_hosts)):
             match = regex.search(connectionfailed_hosts[i]['address'])
             if match:
                 f.write("%s\n" % match.group())
+<<<<<<< HEAD
+
+=======
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
     sys.exit(0)
 logging.getLogger('paramiko').addHandler(logging.NullHandler())
+Device.auto_probe = 2
 
+<<<<<<< HEAD
+if __name__ == '__main__':
+    main()
+=======
 if __name__ == "__main__":
     main()
+>>>>>>> 2e349ef0b1aedc3f76ef7dc21c144554acbf90c0
