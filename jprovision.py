@@ -84,7 +84,7 @@ class myDev():
             raise jException(err, self.hostname)
 
     def showcompare(self):
-        self.jnprdev.cu.diff(rb_id=0)
+        return self.jnprdev.cu.diff()
 
     def commit(self, comment):
         try:
@@ -149,10 +149,11 @@ def provision(host, logger, **kwargs):
             dv.close()
             sys.exit(1)
 
-    if compareconfig != 'true':
+    if compareconfig == True:
         print colored("\n'show | compare' output:", 'blue')
-        print dv.showcompare()
-
+        diff = dv.showcompare()
+        print diff
+        
     if waitconfirm == b'true':
         if kwargs['first_host'] == b'true':
             ack = raw_input('Proceed with commiting? [y/n]: ')
