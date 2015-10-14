@@ -321,22 +321,27 @@ def main():
     else:
         subnet = IP(args.target)
         try:
-            print'Starting ping sweep on subnet %s' % subnet
-
             if len(subnet) == 1:
-                ping_result = subprocess.call('ping -c 2 -n -W 3 %s' % i,
+                print'Sending icmp request to host %s' % subnet
+                ping_result = subprocess.call('ping -c 1 -n -W 1 %s' % subnet,
                     shell=True,
                     stdout=open('/dev/null', 'w'),
                     stderr=subprocess.STDOUT)
                 if ping_result == 0:
-                    hosts.append({'address': str(i), 'status': ''})
-                    logging.debug('Adding IP: %s to hosts list' % i)
+                    hosts.append({'address': str(subnet), 'status': ''})
+                    print colored("Host %s is responding to icmp request" % subnet, 'green')
+                    logging.debug('Adding IP: %s to hosts list' % subnet)
+                else:
+                    print colored("Host %s is not responding to icmp request" % subnet, 'red')
+                    logging.info("Host %s is not responding to icmp request" % subnet)
+                    sys.exit(1)
             else:
+                print'Starting ping sweep on subnet %s' % subnet
                 jobs = mp.Queue()
                 results = mp.Queue()
                 failed = mp.Queue()
                 pool_size = len(subnet)
-                procs_pool = [mp.Process(target=pinger, 
+                procs_pool = [mp.Process(target=pinger,
                     args=(jobs, results, failed)) for i in range(pool_size)]
 
                 for i in subnet:
@@ -358,13 +363,14 @@ def main():
                     failedhosts.append(i)
                     logging.debug('Adding IP: %s to failedhosts list' % i)
 
-            failed_sorted = sort_ip_list(failedhosts)
+                failed_sorted = sort_ip_list(failedhosts)
 
-            with open('no_icmp_response.txt', 'w+') as f:
-                for ipaddr in failed_sorted:
-                    f.write("%s\n" % ipaddr)        
-            print colored('Found %d hosts alive in subnet %s', 'green') % (len(hosts), subnet)
-            print colored('No icmp reply from %d hosts in subnet %s (please see no_icmp_response.txt file)', 'yellow') % (len(failedhosts), subnet)
+                with open('no_icmp_response.txt', 'w+') as f:
+                    for ipaddr in failed_sorted:
+                        f.write("%s\n" % ipaddr)
+
+                print colored('Found %d hosts alive in subnet %s', 'green') % (len(hosts), subnet)
+                print colored('No icmp reply from %d hosts in subnet %s (please see no_icmp_response.txt file)', 'yellow') % (len(failedhosts), subnet)
         except ValueError as err:
             logging.info(err)
             print colored(err, 'red')
