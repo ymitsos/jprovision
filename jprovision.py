@@ -18,11 +18,13 @@ import getpass
 import logging
 import subprocess
 import re
+import jnpr.junos.exception
+import multiprocessing as mp
+from pprint import pprint
 from jnpr.junos import Device
 from jnpr.junos.op.phyport import *
 from jnpr.junos.utils.config import Config
 from jnpr.junos.utils.scp import SCP
-import jnpr.junos.exception
 from termcolor import colored
 from IPy import IP
 from jexceptions import jException
@@ -43,13 +45,13 @@ class myDev():
         self.port = port
         self.username = username
         self.password = password
-        self.jnprdev =   Device(host=hostname,
-                         username=username,
-                         password=password,
-                         port=port,
-                         timeout=5,
-                         device_params={'name':'junos'},
-                         hostkey_verify=False)
+        self.jnprdev = Device(host=hostname,
+            username=username,
+            password=password,
+            port=port,
+            timeout=5,
+            device_params={'name':'junos'},
+            hostkey_verify=False)
         self.rpc = self.jnprdev.rpc
 
     def _open(self):
@@ -93,7 +95,8 @@ class myDev():
             raise jException(err)
 
     def rollback(self):
-        self.jnprdev.cu.rollback(rb_id=0) #rolling back current changes only
+        # rolling back current changes only
+        self.jnprdev.cu.rollback(rb_id=0)
 
     def show_cmd(self, command):
         self.jnprdev.cli(command, format='text', warning=True)
@@ -106,7 +109,7 @@ class myDev():
                 raise jException(err, self.hostname)
 
     def close(self):
-        if hasattr (self.jnprdev, 'cu'):
+        if hasattr(self.jnprdev, 'cu'):
             self.jnprdev.cu.unlock()
         self.jnprdev.close()
 
@@ -137,7 +140,7 @@ def provision(host, logger, **kwargs):
         dv.load_configuration(configuration)
     except jException as err:
         logging.info(err)
-        print colored(err ,'red')
+        print colored(err , 'red')
         print colored('Loading command failed with severity: %s', 'red') % err.errs['severity']
         host['status'] = COMMIT_FAILED_WARNING
         if err.errs['severity'] == 'error':
@@ -149,11 +152,11 @@ def provision(host, logger, **kwargs):
             dv.close()
             sys.exit(1)
 
-    if compareconfig == True:
+    if compareconfig is True:
         print colored("\n'show | compare' output:", 'blue')
         diff = dv.showcompare()
         print diff
-        
+
     if waitconfirm == b'true':
         if kwargs['first_host'] == b'true':
             ack = raw_input('Proceed with commiting? [y/n]: ')
@@ -189,6 +192,10 @@ def provision(host, logger, **kwargs):
     logger.info('Finished.')
 
 def fileloader(host, logger, package, remotepath, **kwargs):
+    """
+    use scp to upload a file to
+    a remote host
+    """
     print colored("-------------------------------------------------------------------------------\n", 'yellow')
     print colored("Start file transfer to: ", "cyan") + colored("%s" % host['address'], "yellow")
     logging.info("Start file transfer to %s" % host['address'])
@@ -219,6 +226,30 @@ def fileloader(host, logger, package, remotepath, **kwargs):
     dv.close()
     logger.info('Finished.')
 
+def pinger(jobq, resultsq, failedq):
+    """
+    send one ICMP request to each host
+    in subnet and record output to Queue
+    """
+    for ip in iter(jobq.get, None):
+        try:
+            pinging = subprocess.call(['ping', '-n', '-c1', '-W1', ip],
+                stdout=open('/dev/null', 'w'),
+                stderr=subprocess.STDOUT)
+            if pinging == 0:
+                resultsq.put(ip)
+            else:
+                failedq.put(ip)
+        except:
+            pass
+
+def sort_ip_list(failed):
+    """
+    sort ip addresses that failed to respond to icmp request
+    """
+    iplist = [(IP(ip).int(), ip) for ip in failed]
+    iplist.sort()
+    return [ip[1] for ip in iplist]
 
 def main():
 
@@ -253,7 +284,11 @@ def main():
 
     if not args.configfile:
         if not (args.package or args.remotepath):
-            sys.stdout.write("Either --config or --package (with) --remotepath must be defined\n")
+            sys.stdout.write("""
+                Either input --config flag 
+                or --package (with) --remotepath flags
+                or --help for help\n
+                """)
             sys.exit(1)
 
     if not bool(args.target) != bool(args.hostsfile):
@@ -277,32 +312,59 @@ def main():
 
     logger.info('Parsing hosts list.')
     hosts = []
+    failedhosts = []
     if args.hostsfile:
         with open(args.hostsfile, mode='r') as hostsfile:
             for line in hostsfile:
-                hosts.append({'address': line.rstrip('\n'), 'status': ''})
+                trim = line.strip()
+                hosts.append({'address': trim.rstrip('\n'), 'status': ''})
     else:
+        subnet = IP(args.target)
         try:
-            subnet = IP(args.target)
             print'Starting ping sweep on subnet %s' % subnet
-            for i in subnet:
-                if len(subnet) == 1:
-                    ping_result = subprocess.call('ping -c 1 -n -i 0.5 -W 1 %s' % i,
-                        shell=True,
-                        stdout=open('/dev/null', 'w'),
-                        stderr=subprocess.STDOUT)
-                    if ping_result == 0:
-                        hosts.append({'address': str(i), 'status': ''})
-                        logging.debug('Adding IP: %s to hosts list' % i)
-                elif i != subnet.broadcast() and i != subnet.net():
-                    ping_result = subprocess.call('ping -c 1 -n -i 0.5 -W 1 %s' % i,
-                        shell=True,
-                        stdout=open('/dev/null', 'w'),
-                        stderr=subprocess.STDOUT)
-                    if ping_result == 0:
-                        hosts.append({'address': str(i), 'status': ''})
-                        logging.debug('Adding IP: %s to hosts list' % i)
+
+            if len(subnet) == 1:
+                ping_result = subprocess.call('ping -c 2 -n -W 3 %s' % i,
+                    shell=True,
+                    stdout=open('/dev/null', 'w'),
+                    stderr=subprocess.STDOUT)
+                if ping_result == 0:
+                    hosts.append({'address': str(i), 'status': ''})
+                    logging.debug('Adding IP: %s to hosts list' % i)
+            else:
+                jobs = mp.Queue()
+                results = mp.Queue()
+                failed = mp.Queue()
+                pool_size = len(subnet)
+                procs_pool = [mp.Process(target=pinger, 
+                    args=(jobs, results, failed)) for i in range(pool_size)]
+
+                for i in subnet:
+                    ip = str(i)
+                    jobs.put(ip)
+                for p in procs_pool:
+                    p.start()
+                for p in procs_pool:
+                    jobs.put(None)
+                for p in procs_pool:
+                    p.join()
+
+                while not results.empty():
+                    i = results.get()
+                    hosts.append({'address': str(i), 'status': ''})
+                    logging.debug('Adding IP: %s to hosts list' % i)
+                while not failed.empty():
+                    i = failed.get()
+                    failedhosts.append(i)
+                    logging.debug('Adding IP: %s to failedhosts list' % i)
+
+            failed_sorted = sort_ip_list(failedhosts)
+
+            with open('no_icmp_response.txt', 'w+') as f:
+                for ipaddr in failed_sorted:
+                    f.write("%s\n" % ipaddr)        
             print colored('Found %d hosts alive in subnet %s', 'green') % (len(hosts), subnet)
+            print colored('No icmp reply from %d hosts in subnet %s (please see no_icmp_response.txt file)', 'yellow') % (len(failedhosts), subnet)
         except ValueError as err:
             logging.info(err)
             print colored(err, 'red')
